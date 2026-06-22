@@ -7,7 +7,8 @@ import { BrainCircuit, Wrench, ShieldCheck, Play, Server, Code, CheckCircle, Ale
 type AgentStatus = "idle" | "processing" | "passing" | "success" | "warning" | "starting" | "complete";
 
 interface AgentLog {
-  id: number;
+  id: string;
+  timestamp: string;
   agent: string;
   message: string;
   status: AgentStatus;
@@ -24,6 +25,15 @@ export default function SwarmVisualizer() {
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -35,27 +45,52 @@ export default function SwarmVisualizer() {
     setLogs([]);
     setActiveNode("none");
 
-    let logId = 0;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
     const eventSource = new EventSource("/api/orchestrate");
+    eventSourceRef.current = eventSource;
 
     eventSource.addEventListener("active_node", (e) => {
-      const data = JSON.parse(e.data);
-      setActiveNode(data.nodeId);
+      try {
+        const data = JSON.parse(e.data);
+        if (data && typeof data === 'object') {
+          setActiveNode(data.nodeId);
+        }
+      } catch (err) {
+        console.error("Failed to parse active_node data", err);
+      }
     });
 
     eventSource.addEventListener("status", (e) => {
-      const data = JSON.parse(e.data);
-      setLogs((prev) => [...prev, { id: logId++, ...data }]);
+      try {
+        const data = JSON.parse(e.data);
+        if (data && typeof data === 'object') {
+          const newLog: AgentLog = {
+            id: crypto.randomUUID(),
+            timestamp: new Date().toLocaleTimeString(),
+            agent: data.agent || "System",
+            message: data.message || "",
+            status: data.status || "processing"
+          };
+          setLogs((prev) => [...prev, newLog]);
+        }
+      } catch (err) {
+        console.error("Failed to parse status data", err);
+      }
     });
 
     eventSource.addEventListener("done", () => {
       setIsRunning(false);
       eventSource.close();
+      eventSourceRef.current = null;
     });
 
     eventSource.addEventListener("error", () => {
       setIsRunning(false);
       eventSource.close();
+      eventSourceRef.current = null;
     });
   };
 
@@ -64,7 +99,7 @@ export default function SwarmVisualizer() {
       
       {/* Left Column: Visualization */}
       <div className="flex-1 flex flex-col gap-8 items-center justify-center relative">
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/10 via-transparent to-purple-900/10 rounded-3xl blur-3xl -z-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/10 via-transparent to-purple-900/10 rounded-3xl blur-2xl -z-10" />
         
         <div className="w-full max-w-md flex flex-col gap-12 relative z-10">
           {agents.map((agent, index) => {
@@ -157,7 +192,7 @@ export default function SwarmVisualizer() {
                 className="flex flex-col gap-1"
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-500 text-xs">[{new Date().toLocaleTimeString()}]</span>
+                  <span className="text-slate-500 text-xs">[{log.timestamp}]</span>
                   <span className={`font-semibold ${
                     log.agent === 'System' ? 'text-slate-400' :
                     log.agent === 'Architect_Agent' ? 'text-blue-400' :
